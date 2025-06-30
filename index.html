@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Buscador de Productos con Modal</title>
+  <style>
+    body { font-family: Arial; margin: 0; padding: 0; }
+    .container { display: flex; padding: 20px; }
+    .filters, .results { padding: 20px; }
+    .filters { width: 30%; background: #f7f7f7; border-right: 1px solid #ddd; }
+    .results { width: 70%; }
+    select, input[type="text"], button { width: 100%; margin-bottom: 10px; padding: 5px; }
+    .product { border: 1px solid #ccc; margin-bottom: 10px; padding: 10px; cursor: pointer; background: white; }
+    label { font-weight: bold; display: block; margin-top: 10px; }
+    .pagination { margin-top: 10px; }
+    .pagination button { padding: 5px 10px; margin-right: 5px; }
+    #loader { font-size: 18px; color: #444; }
+    .hidden { display: none !important; }
+
+    /* Modal */
+    #productoModal {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background-color: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 9999;
+    }
+
+    #productoModal .contenido {
+      background: white; padding: 20px;
+      max-width: 800px; max-height: 90vh;
+      overflow-y: auto; border-radius: 8px;
+      position: relative;
+      box-shadow: 0 0 10px rgba(0,0,0,0.4);
+    }
+
+    #productoModal .contenido button {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: none;
+      border: none;
+      font-size: 24px;
+      font-weight: bold;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .filtro-tag {
+  background-color: #e0e0e0;
+  border-radius: 16px;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+}
+
+.filtro-tag button {
+  background: none;
+  border: none;
+  font-weight: bold;
+  margin-left: 5px;
+  cursor: pointer;
+}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="filters">
+      <label for="searchInput">Buscar:</label>
+      <input type="text" id="searchInput" placeholder="Buscar productos...">
+
+      <label for="categoria_general">Categoría General:</label>
+      <select id="categoria_general"></select>
+
+      <label for="subcategoria">Subcategoría:</label>
+      <select id="subcategoria"></select>
+
+      <label for="brand">Marca (Brand):</label>
+      <select id="brand"></select>
+
+      <div id="sideFilters" class="hidden"></div>
+
+      <button id="resetBtn">Reset filtros</button>
+    </div>
+
+    <div class="results">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="margin-bottom: 5px;">Productos</h2>
+<div id="activeFilters" style="margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 8px;"></div>
+        <div id="resultadoCount" style="font-size: 14px; color: #555;"></div>
+      </div>
+      <div id="loader">Cargando productos...</div>
+      <div id="productList" style="display:none;"></div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div id="productoModal" class="hidden">
+    <div class="contenido">
+      <button onclick="cerrarModal()">✖</button>
+      <div id="modalContenido"></div>
+    </div>
+  </div>
+
+  <script>
+    let productos = [], filtrados = [], filtrosSecundarios = [
+      "material", "capacity", "discipline", "uso", "type",
+      "sterile_or_non_sterile", "reusable_or_disposable",
+      "individual_or_bulk", "categoria_1", "categoria_2"
+    ];
+    let pageSize = 50, currentPage = 1;
+    const filtrosPrincipales = ["categoria_general", "subcategoria", "brand"];
+    const todosFiltros = [...filtrosPrincipales, ...filtrosSecundarios];
+
+    fetch("http://supabasekong-sgkcowgcgwgoco0kgcgok4gg.31.97.10.11.sslip.io/storage/v1/object/public/lauka/productos_unificados.json")
+      .then(res => res.json())
+      .then(data => {
+        productos = data;
+        crearFiltros();
+        aplicarFiltrosYActualizarTodo();
+        document.getElementById("loader").style.display = "none";
+        document.getElementById("productList").style.display = "block";
+      });
+
+
+      function renderTagsSeleccionados() {
+  const contenedor = document.getElementById("activeFilters");
+  contenedor.innerHTML = "";
+
+  const orden = ["categoria_general", "subcategoria", "brand", ...filtrosSecundarios];
+
+  orden.forEach(f => {
+    const select = document.getElementById(f);
+    const label = document.querySelector(`label[for="${f}"]`);
+    const texto = select?.options[select.selectedIndex]?.textContent;
+
+    if (select && select.value) {
+      const tag = document.createElement("div");
+      tag.className = "filtro-tag";
+      tag.innerHTML = `${label ? label.textContent.replace(/\s\(\d+\)$/, '') : f}: ${texto.replace(/\s\(\d+\)$/, '')}
+        <button onclick="eliminarFiltro('${f}')">✖</button>`;
+      contenedor.appendChild(tag);
+    }
+  });
+}
+
+function eliminarFiltro(id) {
+  const select = document.getElementById(id);
+  if (select) {
+    select.value = "";
+    aplicarFiltrosYActualizarTodo();
+  }
+}
+    function crearFiltros() {
+      todosFiltros.forEach(f => {
+        let select = document.getElementById(f);
+        if (!select) {
+          const s = document.createElement("select");
+          s.id = f;
+          const label = document.createElement("label");
+          label.textContent = f.replaceAll("_", " ");
+          label.setAttribute("for", f);
+          s.classList.add("secundario");
+          document.getElementById("sideFilters").appendChild(label);
+          document.getElementById("sideFilters").appendChild(s);
+        }
+        document.getElementById(f).addEventListener("change", aplicarFiltrosYActualizarTodo);
+      });
+
+      document.getElementById("searchInput").addEventListener("input", aplicarFiltrosYActualizarTodo);
+      document.getElementById("resetBtn").addEventListener("click", () => {
+        document.getElementById("searchInput").value = "";
+        todosFiltros.forEach(f => {
+          const el = document.getElementById(f);
+          if (el) el.value = "";
+        });
+        document.getElementById("sideFilters").classList.add("hidden");
+        aplicarFiltrosYActualizarTodo();
+      });
+    }
+
+    function aplicarFiltrosYActualizarTodo() {
+      filtrados = productos.filter(p => coincideConFiltros(p));
+      actualizarOpcionesDinamicas();
+      controlarVisibilidadSecundarios();
+      renderTagsSeleccionados();
+      currentPage = 1;
+      renderPagina();
+    }
+
+    function coincideConFiltros(p) {
+      const texto = document.getElementById("searchInput").value.toLowerCase();
+      if (texto) {
+        const combinado = Object.values(p).join(" ").toLowerCase();
+        if (!texto.split(" ").every(t => combinado.includes(t))) return false;
+      }
+
+      for (const f of todosFiltros) {
+        const el = document.getElementById(f);
+        if (el) {
+          const val = el.value;
+          if (val && p[f] !== val) return false;
+        }
+      }
+      return true;
+    }
+
+    function actualizarOpcionesDinamicas() {
+      const activos = Object.fromEntries(todosFiltros.map(f => [f, document.getElementById(f).value]));
+      const disponibles = filtrados;
+
+      for (const f of todosFiltros) {
+        const select = document.getElementById(f);
+        const label = document.querySelector(`label[for="${f}"]`);
+
+        const conteo = {};
+        disponibles.forEach(p => {
+          if (p[f]) conteo[p[f]] = (conteo[p[f]] || 0) + 1;
+        });
+
+        const valores = Object.keys(conteo).sort((a, b) => conteo[b] - conteo[a]);
+
+        const esPrincipal = filtrosPrincipales.includes(f);
+        const tieneValorSeleccionado = !!select.value;
+
+        if (valores.length <= 1 && !esPrincipal && !tieneValorSeleccionado) {
+          if (select) select.style.display = "none";
+          if (label) label.style.display = "none";
+          continue;
+        } else {
+          if (select) select.style.display = "block";
+          if (label) label.style.display = "block";
+        }
+
+        select.innerHTML = `<option value="">-- Todos --</option>` +
+          valores.map(v => {
+            const count = conteo[v] || 0;
+            return `<option value="${v}" ${v === activos[f] ? "selected" : ""}>${v} (${count})</option>`;
+          }).join('');
+
+        if (label) label.textContent = `${f.replaceAll("_", " ")} (${valores.length})`;
+      }
+    }
+
+    function controlarVisibilidadSecundarios() {
+      const valoresActivos = filtrosPrincipales.map(f => document.getElementById(f).value).filter(v => v !== "");
+      if (valoresActivos.length >= 2) {
+        document.getElementById("sideFilters").classList.remove("hidden");
+      } else {
+        document.getElementById("sideFilters").classList.add("hidden");
+      }
+    }
+
+    function renderPagina() {
+      const cont = document.getElementById("productList");
+      cont.innerHTML = "";
+
+      document.getElementById("resultadoCount").textContent = `Resultados: ${filtrados.length} producto${filtrados.length === 1 ? '' : 's'}`;
+
+      const start = (currentPage - 1) * pageSize;
+      const pageItems = filtrados.slice(start, start + pageSize);
+
+      if (!pageItems.length) {
+        cont.innerHTML = "<p>No se encontraron productos.</p>";
+        document.getElementById("pagination").innerHTML = "";
+        return;
+      }
+
+      pageItems.forEach((p) => {
+        const div = document.createElement("div");
+        div.className = "product";
+        div.innerHTML = `
+          <strong>${p.descripcion}</strong><br>
+          <small>${p.numero_articulo} | ${p.brand} | ${p.modelo}</small><br>
+          <em>${p.categoria_general} > ${p.subcategoria}</em>
+        `;
+        div.onclick = () => mostrarModal(p);
+        cont.appendChild(div);
+      });
+
+      renderPaginacion();
+    }
+
+    function renderPaginacion() {
+      const totalPages = Math.ceil(filtrados.length / pageSize);
+      const pagCont = document.getElementById("pagination");
+      pagCont.innerHTML = "";
+
+      if (totalPages <= 1) return;
+
+      for (let i = 1; i <= totalPages; i++) {
+        const btn = document.createElement("button");
+        btn.textContent = i;
+        if (i === currentPage) btn.disabled = true;
+        btn.onclick = () => {
+          currentPage = i;
+          renderPagina();
+        };
+        pagCont.appendChild(btn);
+      }
+    }
+
+    function mostrarModal(p) {
+      const modal = document.getElementById("productoModal");
+      const contenido = `
+        <h2>${p.descripcion}</h2>
+        <p><b>Artículo:</b> ${p.numero_articulo}</p>
+        <p><b>Marca:</b> ${p.brand} | <b>Modelo:</b> ${p.modelo}</p>
+        <p><b>Categoría:</b> ${p.categoria_general} > ${p.subcategoria}</p>
+        <hr>
+        <p><b>Uso:</b> ${p.uso || 'N/A'}</p>
+        <p><b>Capacidad:</b> ${p.capacity || 'N/A'}</p>
+        <p><b>Unidad:</b> ${p.unidad || 'N/A'}</p>
+        <p><b>Material:</b> ${p.material || 'N/A'}</p>
+        <p><b>Disciplina:</b> ${p.discipline || 'N/A'}</p>
+        <p><b>Tipo:</b> ${p.type || 'N/A'}</p>
+        <p><b>Esterilidad:</b> ${p.sterile_or_non_sterile || 'N/A'}</p>
+        <p><b>Reutilizable:</b> ${p.reusable_or_disposable || 'N/A'}</p>
+        <p><b>Empaque:</b> ${p.individual_or_bulk || 'N/A'} (${p.packaging_size || 'N/A'})</p>
+        <p><b>Normativas:</b> ${p.normativas || 'N/A'}</p>
+        <p><b>Certificado:</b> ${p.certificado || 'N/A'}</p>
+        <p><b>CAS:</b> ${p.cas_number || 'N/A'}</p>
+        <p><b>Grado:</b> ${p.grado || 'N/A'}</p>
+        <p><b>Categorías adicionales:</b> ${p.categoria_1 || 'N/A'}, ${p.categoria_2 || 'N/A'}</p>
+        <p><b>Palabras clave:</b> ${(p.keywords || []).join(', ') || 'N/A'}</p>
+        <p><b>Productos relacionados:</b> ${(p.productos_relacionados || []).join(', ') || 'N/A'}</p>
+        <p><b>Recomendados:</b> ${(p.recomendados || []).join(', ') || 'N/A'}</p>
+      `;
+      document.getElementById("modalContenido").innerHTML = contenido;
+      modal.classList.remove("hidden");
+    }
+
+    function cerrarModal() {
+      document.getElementById("productoModal").classList.add("hidden");
+    }
+  </script>
+</body>
+</html>
